@@ -413,51 +413,126 @@ func (servers *mongoServers) HasMongos() bool {
 
 // BestFit returns the best guess of what would be the most interesting
 // server to perform operations on at this point in time.
-func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) *mongoServer {
-	var best *mongoServer
-	for _, next := range servers.slice {
-		if best == nil {
-			best = next
-			best.RLock()
-			if serverTags != nil && !next.info.Mongos && !best.hasTags(serverTags) {
-				best.RUnlock()
-				best = nil
-			}
-			continue
-		}
-		next.RLock()
-		swap := false
-		switch {
-		case serverTags != nil && !next.info.Mongos && !next.hasTags(serverTags):
-			// Must have requested tags.
-		case mode == Secondary && next.info.Master && !next.info.Mongos:
-			// Must be a secondary or mongos.
-		case next.info.Master != best.info.Master && mode != Nearest:
-			// Prefer slaves, unless the mode is PrimaryPreferred.
-			swap = (mode == PrimaryPreferred) != best.info.Master
-		case absDuration(next.pingValue-best.pingValue) > 15*time.Millisecond:
-			// Prefer nearest server.
-			swap = next.pingValue < best.pingValue
-		case len(next.liveSockets)-len(next.unusedSockets) < len(best.liveSockets)-len(best.unusedSockets):
-			// Prefer servers with less connections.
-			swap = true
-		}
-		if swap {
-			best.RUnlock()
-			best = next
-		} else {
-			next.RUnlock()
+//func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) *mongoServer {
+//	var best *mongoServer
+//	for _, next := range servers.slice {
+//		if best == nil {
+//			best = next
+//			best.RLock()
+//			if serverTags != nil && !next.info.Mongos && !best.hasTags(serverTags) {
+//				best.RUnlock()
+//				best = nil
+//			}
+//			continue
+//		}
+//		next.RLock()
+//		swap := false
+//		switch {
+//		case serverTags != nil && !next.info.Mongos && !next.hasTags(serverTags):
+//			// Must have requested tags.
+//		case mode == Secondary && next.info.Master && !next.info.Mongos:
+//			// Must be a secondary or mongos.
+//		case next.info.Master != best.info.Master && mode != Nearest:
+//			// Prefer slaves, unless the mode is PrimaryPreferred.
+//			swap = (mode == PrimaryPreferred) != best.info.Master
+//		case absDuration(next.pingValue-best.pingValue) > 15*time.Millisecond:
+//			// Prefer nearest server.
+//			swap = next.pingValue < best.pingValue
+//		case len(next.liveSockets)-len(next.unusedSockets) < len(best.liveSockets)-len(best.unusedSockets):
+//			// Prefer servers with less connections.
+//			swap = true
+//		}
+//		if swap {
+//			best.RUnlock()
+//			best = next
+//		} else {
+//			next.RUnlock()
+//		}
+//	}
+//	if best != nil {
+//		best.RUnlock()
+//	}
+//	return best
+//}
+//
+//func absDuration(d time.Duration) time.Duration {
+//	if d < 0 {
+//		return -d
+//	}
+//	return d
+//}
+
+// Find the master server in the list of servers
+func (servers *mongoServers) masterServer() *mongoServer {
+	for _, s := range servers.slice {
+		if s.info.Master {
+			return s
 		}
 	}
-	if best != nil {
-		best.RUnlock()
-	}
-	return best
+	return nil
 }
 
-func absDuration(d time.Duration) time.Duration {
-	if d < 0 {
-		return -d
+// Find a list of eligibleServers using the criteria from
+// https://docs.mongodb.com/manual/core/read-preference-mechanics/#read-preference-for-replica-sets
+func (servers *mongoServers) eligibleServers(includeMaster bool, serverTags []bson.D) []*mongoServer {
+	var eligibleServers []*mongoServer
+
+	nearestPingValue := 1 * time.Hour
+	for _, s := range servers.slice {
+		eligible := true
+
+		if serverTags != nil && !s.info.Mongos && !s.hasTags(serverTags) {
+			// skip because tags don't match
+			eligible = false
+		} else {
+			// include if it's a secondary or
+			eligible = !s.info.Master || includeMaster
+		}
+
+		if eligible {
+			eligibleServers = append(eligibleServers, s)
+			if s.pingValue < nearestPingValue {
+				nearestPingValue = s.pingValue
+			}
+		}
 	}
-	return d
+
+	// filter down to the list of servers that are within 15 ms of the nearest
+	var nearestEligibleServers []*mongoServer
+	for _, s := range eligibleServers {
+		if s.pingValue < nearestPingValue + 15 * time.Millisecond {
+			nearestEligibleServers = append(nearestEligibleServers, s)
+		}
+	}
+
+	return nearestEligibleServers
 }
+
+// BestFit2 returns the a random server from the list of eligible servers with
+// a few overrides based on mode.
+func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) *mongoServer {
+	// Primary and PrimaryPreferred should just check for a master and return it
+	if mode == Primary || mode == PrimaryPreferred {
+		primary := servers.masterServer()
+		if primary != nil {
+			return primary
+		} else if mode == Primary {
+			return nil
+		}
+	}
+
+	// Already handled the Primary and PrimaryPreferred cases, so build a list of
+	// eligible servers, and pick one at random
+	eligibleServers := servers.eligibleServers(mode == Nearest, serverTags)
+	if len(eligibleServers) > 0 {
+		i := rand.Intn(len(eligibleServers))
+		return eligibleServers[i]
+	}
+
+	if mode == SecondaryPreferred {
+		return servers.masterServer()
+	}
+
+	return nil
+}
+
