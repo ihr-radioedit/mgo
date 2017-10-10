@@ -35,6 +35,8 @@ import (
 	"math/rand"
 
 	"gopkg.in/mgo.v2/bson"
+	"fmt"
+	"github.com/davecgh/go-spew/spew"
 )
 
 // ---------------------------------------------------------------------------
@@ -511,7 +513,11 @@ func (servers *mongoServers) eligibleServers(includeMaster bool, serverTags []bs
 
 // BestFit2 returns the a random server from the list of eligible servers with
 // a few overrides based on mode.
-func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) *mongoServer {
+func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) (ret *mongoServer) {
+	defer func() {
+		fmt.Printf("BestFit mode=%v tags=%v ret.Addr=%v ret.master=%v", mode, serverTags, ret.Addr, ret.info.Master)
+		spew.Dump(servers.slice)
+	}()
 	// Primary and PrimaryPreferred should just check for a master and return it
 	if mode == Primary || mode == PrimaryPreferred {
 		primary := servers.masterServer()
