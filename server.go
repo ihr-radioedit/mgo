@@ -28,15 +28,13 @@ package mgo
 
 import (
 	"errors"
+	"math/rand"
 	"net"
 	"sort"
 	"sync"
 	"time"
-	"math/rand"
 
 	"gopkg.in/mgo.v2/bson"
-	"fmt"
-	"github.com/davecgh/go-spew/spew"
 )
 
 // ---------------------------------------------------------------------------
@@ -431,6 +429,7 @@ func (servers *mongoServers) eligibleServers(includeMaster bool, serverTags []bs
 
 	nearestPingValue := 1 * time.Hour
 	for _, s := range servers.slice {
+		s.RLock()
 		eligible := true
 
 		if serverTags != nil && !s.info.Mongos && !s.hasTags(serverTags) {
@@ -446,15 +445,21 @@ func (servers *mongoServers) eligibleServers(includeMaster bool, serverTags []bs
 			if s.pingValue < nearestPingValue {
 				nearestPingValue = s.pingValue
 			}
+		} else {
+			s.RUnlock()
 		}
 	}
 
 	// filter down to the list of servers that are within 15 ms of the nearest
 	var nearestEligibleServers []*mongoServer
 	for _, s := range eligibleServers {
-		if s.pingValue < nearestPingValue + 15 * time.Millisecond {
+		if s.pingValue < nearestPingValue+15*time.Millisecond {
 			nearestEligibleServers = append(nearestEligibleServers, s)
 		}
+	}
+
+	for _, s := range eligibleServers {
+		s.RUnlock()
 	}
 
 	return nearestEligibleServers
@@ -463,10 +468,7 @@ func (servers *mongoServers) eligibleServers(includeMaster bool, serverTags []bs
 // BestFit2 returns the a random server from the list of eligible servers with
 // a few overrides based on mode.
 func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) (ret *mongoServer) {
-	defer func() {
-		fmt.Printf("BestFit mode=%v tags=%v ret.Addr=%v ret.master=%v", mode, serverTags, ret.Addr, ret.info.Master)
-		spew.Dump(servers.slice)
-	}()
+	var eligibleServers []*mongoServer
 	// Primary and PrimaryPreferred should just check for a master and return it
 	if mode == Primary || mode == PrimaryPreferred {
 		primary := servers.masterServer()
@@ -479,7 +481,7 @@ func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) (ret *mongo
 
 	// Already handled the Primary and PrimaryPreferred cases, so build a list of
 	// eligible servers, and pick one at random
-	eligibleServers := servers.eligibleServers(mode == Nearest, serverTags)
+	eligibleServers = servers.eligibleServers(mode == Nearest, serverTags)
 	if len(eligibleServers) > 0 {
 		i := rand.Intn(len(eligibleServers))
 		return eligibleServers[i]
@@ -491,4 +493,3 @@ func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) (ret *mongo
 
 	return nil
 }
-
