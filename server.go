@@ -414,57 +414,6 @@ func (servers *mongoServers) HasMongos() bool {
 	return false
 }
 
-// BestFit returns the best guess of what would be the most interesting
-// server to perform operations on at this point in time.
-//func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) *mongoServer {
-//	var best *mongoServer
-//	for _, next := range servers.slice {
-//		if best == nil {
-//			best = next
-//			best.RLock()
-//			if serverTags != nil && !next.info.Mongos && !best.hasTags(serverTags) {
-//				best.RUnlock()
-//				best = nil
-//			}
-//			continue
-//		}
-//		next.RLock()
-//		swap := false
-//		switch {
-//		case serverTags != nil && !next.info.Mongos && !next.hasTags(serverTags):
-//			// Must have requested tags.
-//		case mode == Secondary && next.info.Master && !next.info.Mongos:
-//			// Must be a secondary or mongos.
-//		case next.info.Master != best.info.Master && mode != Nearest:
-//			// Prefer slaves, unless the mode is PrimaryPreferred.
-//			swap = (mode == PrimaryPreferred) != best.info.Master
-//		case absDuration(next.pingValue-best.pingValue) > 15*time.Millisecond:
-//			// Prefer nearest server.
-//			swap = next.pingValue < best.pingValue
-//		case len(next.liveSockets)-len(next.unusedSockets) < len(best.liveSockets)-len(best.unusedSockets):
-//			// Prefer servers with less connections.
-//			swap = true
-//		}
-//		if swap {
-//			best.RUnlock()
-//			best = next
-//		} else {
-//			next.RUnlock()
-//		}
-//	}
-//	if best != nil {
-//		best.RUnlock()
-//	}
-//	return best
-//}
-//
-//func absDuration(d time.Duration) time.Duration {
-//	if d < 0 {
-//		return -d
-//	}
-//	return d
-//}
-
 // Find the master server in the list of servers
 func (servers *mongoServers) masterServer() *mongoServer {
 	for _, s := range servers.slice {
