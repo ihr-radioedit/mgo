@@ -481,13 +481,13 @@ func (servers *mongoServers) BestFit(mode Mode, serverTags []bson.D) (ret *mongo
 
 	// Already handled the Primary and PrimaryPreferred cases, so build a list of
 	// eligible servers, and pick one at random
-	eligibleServers = servers.eligibleServers(mode == Nearest, serverTags)
+	eligibleServers = servers.eligibleServers(mode == Nearest || mode == Eventual, serverTags)
 	if len(eligibleServers) > 0 {
 		i := rand.Intn(len(eligibleServers))
 		return eligibleServers[i]
 	}
 
-	if mode == SecondaryPreferred {
+	if mode == SecondaryPreferred || mode == Monotonic {
 		return servers.masterServer()
 	}
 
